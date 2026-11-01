@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>qimgv</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>qimgv</name>
+  <summary>Fast and easy to use image viewer</summary>
+  <description>
+    <p>GTK 3 rewrite of the qimgv image viewer with the same uncluttered interface and workflow.</p>
+    <ul>
+      <li>JPEG, PNG, APNG, GIF, WebP, JPEG XL, AVIF, HEIF/HEIC, camera RAW, BMP, TIFF, SVG and more</li>
+      <li>Animated GIF, APNG, WebP, JPEG XL and AVIF</li>
+      <li>Thumbnail panel and folder view with bookmarks</li>
+      <li>High quality scaling</li>
+      <li>Crop, rotate, flip and resize</li>
+      <li>Quick copy / move to nine destination folders</li>
+      <li>Configurable shortcuts and user scripts</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">qimgv.desktop</launchable>
+  <provides>
+    <binary>qimgv</binary>
+  </provides>
+  <developer id="io.github.easymodo">
+    <name>easymodo</name>
+  </developer>
+  <url type="homepage">https://github.com/TheElevatedOne/qimgv-gtk</url>
+  <url type="bugtracker">https://github.com/TheElevatedOne/qimgv-gtk/issues</url>
+  <content_rating type="oars-1.1"/>
+</component>

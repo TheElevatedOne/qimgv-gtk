@@ -1,0 +1,97 @@
+# Builds qimgv-gtk on Arch Linux (Ubuntu's exiv2 and libjxl are too old) and runs the decoder tests.
+# Pushing a tag such as 0.1.0 also publishes a GitHub release with the x86_64 tarball, which the
+# qimgv-gtk-bin AUR package downloads. The release notes are the tag's section in CHANGELOG.md.
+name: Build
+
+on:
+  push:
+    branches: [master]
+    tags: ["[0-9]*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (Arch Linux x86_64)
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm --needed git cmake ninja gtk3 libjpeg-turbo libpng libwebp libjxl \
+            libavif libheif libraw exiv2 giflib zlib imagemagick ffmpeg desktop-file-utils appstream
+
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: version
+        run: |
+          version=$(sed -n 's/^project(qimgv VERSION \([^ )]*\).*/\1/p' CMakeLists.txt)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "$version" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match the project version $version in CMakeLists.txt"
+            exit 1
+          fi
+
+      - name: Build
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+          cmake --build build
+
+      - name: Test
+        run: |
+          ./build/qimgv --version
+          ./build/qimgv --help >/dev/null
+          desktop-file-validate data/qimgv.desktop
+          appstreamcli validate --no-net --pedantic data/qimgv.metainfo.xml || true
+          tests/run-decode-tests.sh build
+
+      - name: Package
+        run: packaging/make-release-tarball.sh build "${{ steps.version.outputs.version }}" x86_64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qimgv-gtk-linux-x86_64
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: qimgv-gtk-linux-x86_64
+          path: dist
+
+      - name: Release notes
+        run: |
+          # The lines between "## <tag>" and the next "## " heading.
+          awk -v v="$GITHUB_REF_NAME" '
+            /^## / { if (found) exit; if ($0 == "## " v) { found = 1; next } }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::error::CHANGELOG.md has no \"## $GITHUB_REF_NAME\" section"
+            exit 1
+          fi
+          cat release-notes.md
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --title "qimgv-gtk $GITHUB_REF_NAME" --notes-file release-notes.md
+          fi
