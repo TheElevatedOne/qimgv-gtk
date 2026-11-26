@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.1
 
 - Fixed: qimgv did not start after a libjxl update (`libjxl.so.0.12: cannot open shared object file`).
 - Changed: libjxl, libavif, libheif and LibRaw are optional and loaded at run time by their unversioned
