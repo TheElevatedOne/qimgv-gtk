@@ -22,7 +22,7 @@ conflicts=("$_pkgname" 'qimgv')
 options=('!debug' '!strip')
 # Release tags have no "v" prefix.
 source_x86_64=("$url/releases/download/$pkgver/$_pkgname-$pkgver-linux-x86_64.tar.gz")
-sha256sums_x86_64=('6e9d4231dc679b83913246be7ee11f41d525e17e79595871f49ea9dc75ea5460')
+sha256sums_x86_64=('69376079347bf0b122c98cd69d40c4a7f9ce09befcb2acbab30019f6ac48abee')
 
 package() {
   cd "$_pkgname-$pkgver-linux-$CARCH"
