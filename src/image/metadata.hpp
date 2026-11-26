@@ -1,4 +1,4 @@
-// EXIF / XMP metadata via exiv2.
+// EXIF / XMP metadata via the optional exiv2 plugin (metadata_plugin.h).
 #pragma once
 
 #include <string>
@@ -15,7 +15,10 @@ int readOrientation(const std::string& path);
 InfoList readExifSummary(const std::string& path);
 // Copy metadata from `src` to `dst` (after saving an edited image); resets the orientation.
 void copyMetadata(const std::string& src, const std::string& dst);
-// Silence exiv2's console output. Called once at startup.
+// Load the metadata plugin (silences exiv2's console output). Called once at startup.
 void initMetadata();
+bool haveMetadataPlugin();
+// What was loaded from where, or why not (for --version).
+std::string metadataPluginReport();
 
 }  // namespace qimgv

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Fixed: qimgv did not start after a libjxl update (`libjxl.so.0.12: cannot open shared object file`).
+- Changed: libjxl, libavif, libheif and LibRaw are optional and loaded at run time by their unversioned
+  `.so` name, so a missing library or a new soname only turns off that format. `.jxl`, `.avif` and `.heic`
+  fall back to gdk-pixbuf loaders when the library is missing.
+- Changed: exiv2 moved into an optional plugin, `qimgv-exiv2.so` (installed to `/usr/lib/qimgv`). Without
+  it, EXIF orientation of JPEG and WebP files is still applied.
+- Added: `qimgv --version` lists the optional libraries that were loaded.
+
 ## 0.1.0
 
 First release of the GTK 3 rewrite of qimgv.

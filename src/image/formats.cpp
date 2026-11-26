@@ -6,6 +6,10 @@
 #include <cstring>
 #include <set>
 
+#include <gdk-pixbuf/gdk-pixbuf.h>
+
+#include "image/optlibs.hpp"
+
 namespace qimgv {
 
 static const std::vector<std::string> kRaw = {
@@ -14,9 +18,13 @@ static const std::vector<std::string> kRaw = {
     "raf", "raw", "rw2", "rwl", "rwz", "sr2", "srf", "srw", "x3f"};
 
 static const std::vector<std::string> kImage = {
-    "jpg", "jpeg", "jpe", "jfif", "png", "apng", "gif", "webp", "jxl", "avif", "avifs", "heif", "heic",
-    "heics", "heifs", "hif", "bmp", "dib", "ico", "cur", "icns", "tif", "tiff", "svg", "svgz", "tga",
+    "jpg", "jpeg", "jpe", "jfif", "png", "apng", "gif", "webp", "bmp", "dib", "ico", "cur", "icns", "tif", "tiff", "svg", "svgz", "tga",
     "qoi", "pnm", "pbm", "pgm", "ppm", "pam", "xpm", "xbm", "dds", "exr"};
+
+// Formats from optional libraries: listed when the library loaded, or when gdk-pixbuf has a loader.
+static const std::vector<std::string> kJxl = {"jxl"};
+static const std::vector<std::string> kAvif = {"avif", "avifs"};
+static const std::vector<std::string> kHeif = {"heif", "heic", "heics", "heifs", "hif"};
 
 static const std::set<std::string> kVideo = {
     "webm", "mp4", "m4v", "mpg", "mpeg", "mpe", "mkv", "wmv", "avi", "mov", "flv", "f4v", "ogv", "ogm",
@@ -31,10 +39,34 @@ std::string lowerExtension(const std::string& path) {
     return ext;
 }
 
+static bool pixbufCanLoad(const std::string& ext) {
+    static std::set<std::string> exts = [] {
+        std::set<std::string> out;
+        GSList* formats = gdk_pixbuf_get_formats();
+        for(GSList* l = formats; l; l = l->next) {
+            auto* f = static_cast<GdkPixbufFormat*>(l->data);
+            if(gdk_pixbuf_format_is_disabled(f)) continue;
+            gchar** e = gdk_pixbuf_format_get_extensions(f);
+            for(gchar** p = e; p && *p; p++) out.insert(*p);
+            g_strfreev(e);
+        }
+        g_slist_free(formats);
+        return out;
+    }();
+    return exts.count(ext) > 0;
+}
+
 const std::vector<std::string>& supportedExtensions() {
     static std::vector<std::string> all = [] {
         std::vector<std::string> v = kImage;
-        v.insert(v.end(), kRaw.begin(), kRaw.end());
+        auto addIf = [&](bool native, const std::vector<std::string>& exts) {
+            for(auto& e : exts)
+                if(native || pixbufCanLoad(e)) v.push_back(e);
+        };
+        addIf(haveJxl(), kJxl);
+        addIf(haveAvif(), kAvif);
+        addIf(haveHeif(), kHeif);
+        if(haveRaw()) v.insert(v.end(), kRaw.begin(), kRaw.end());
         return v;
     }();
     return all;
@@ -48,6 +80,7 @@ bool isSupportedExtension(const std::string& ext) {
 bool isVideoExtension(const std::string& ext) { return kVideo.count(ext) > 0; }
 
 bool isRawExtension(const std::string& ext) {
+    if(!haveRaw()) return false;
     static std::set<std::string> s(kRaw.begin(), kRaw.end());
     return s.count(ext) > 0;
 }
@@ -59,7 +92,7 @@ bool isSupportedImageFile(const std::string& path) {
 
 bool canSaveExtension(const std::string& ext) {
     return ext == "jpg" || ext == "jpeg" || ext == "jpe" || ext == "jfif" || ext == "png" || ext == "webp" ||
-           ext == "jxl" || ext == "avif";
+           (ext == "jxl" && haveJxl()) || (ext == "avif" && haveAvif());
 }
 
 static Format fromExtension(const std::string& ext) {
@@ -67,9 +100,10 @@ static Format fromExtension(const std::string& ext) {
     if(ext == "png" || ext == "apng") return Format::PNG;
     if(ext == "gif") return Format::GIF;
     if(ext == "webp") return Format::WebP;
-    if(ext == "jxl") return Format::JXL;
-    if(ext == "avif" || ext == "avifs") return Format::AVIF;
-    if(ext == "heif" || ext == "heic" || ext == "heics" || ext == "heifs" || ext == "hif") return Format::HEIF;
+    if(ext == "jxl") return haveJxl() ? Format::JXL : Format::Pixbuf;
+    if(ext == "avif" || ext == "avifs") return haveAvif() ? Format::AVIF : Format::Pixbuf;
+    if(ext == "heif" || ext == "heic" || ext == "heics" || ext == "heifs" || ext == "hif")
+        return haveHeif() ? Format::HEIF : Format::Pixbuf;
     if(isRawExtension(ext)) return Format::Raw;
     if(isSupportedExtension(ext)) return Format::Pixbuf;
     return Format::Unknown;
@@ -92,8 +126,9 @@ Format detectFormat(const std::string& path) {
     if(n >= 8 && !memcmp(h, "\x89PNG\r\n\x1a\n", 8)) return Format::PNG;
     if(n >= 6 && (!memcmp(h, "GIF87a", 6) || !memcmp(h, "GIF89a", 6))) return Format::GIF;
     if(n >= 12 && !memcmp(h, "RIFF", 4) && !memcmp(h + 8, "WEBP", 4)) return Format::WebP;
-    if(n >= 2 && h[0] == 0xFF && h[1] == 0x0A) return Format::JXL;
-    if(n >= 12 && !memcmp(h, "\0\0\0\x0cJXL \r\n\x87\n", 12)) return Format::JXL;
+    // Formats whose library is missing go to gdk-pixbuf, which may have a loader for them.
+    if(n >= 2 && h[0] == 0xFF && h[1] == 0x0A) return haveJxl() ? Format::JXL : Format::Pixbuf;
+    if(n >= 12 && !memcmp(h, "\0\0\0\x0cJXL \r\n\x87\n", 12)) return haveJxl() ? Format::JXL : Format::Pixbuf;
     if(n >= 12 && !memcmp(h + 4, "ftyp", 4)) {
         // ISO BMFF: check the major brand and the compatible brands.
         uint32_t boxSize = (h[0] << 24) | (h[1] << 16) | (h[2] << 8) | h[3];
@@ -108,8 +143,8 @@ Format detectFormat(const std::string& path) {
         };
         brand(8);
         for(size_t off = 16; off + 4 <= end; off += 4) brand(off);
-        if(avif) return Format::AVIF;
-        if(heif) return Format::HEIF;
+        if(avif) return haveAvif() ? Format::AVIF : haveHeif() ? Format::HEIF : Format::Pixbuf;  // libheif reads AVIF too
+        if(heif) return haveHeif() ? Format::HEIF : Format::Pixbuf;
     }
     Format byExt = fromExtension(ext);
     if(byExt == Format::Unknown) return Format::Pixbuf;  // let gdk-pixbuf try

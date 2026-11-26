@@ -21,6 +21,9 @@ video playback.
 - **Native decoders** for JPEG (libjpeg-turbo), PNG/APNG (libpng), GIF (giflib), WebP (libwebp), JPEG XL
   (libjxl), AVIF (libavif), HEIF/HEIC (libheif) and camera RAW (LibRaw). Everything else gdk-pixbuf can read
   is supported too (BMP, TIFF, SVG, ICO, TGA, QOI, …).
+- **Optional codecs**: libjxl, libavif, libheif, LibRaw and exiv2 are optional, like plugins in qimgv. qimgv
+  loads them when it starts, so a missing library or a library update (a new soname) only turns off that
+  format. Everything else keeps working.
 - **Animations**: GIF, APNG, animated WebP, JPEG XL and AVIF sequences.
 - **No video**: video files are skipped when browsing a folder. Opening one shows a message instead.
 - **High quality scaling**: box-filtered downscaling on a worker thread, so zooming stays responsive. A 20 MP
@@ -45,6 +48,24 @@ video playback.
 | Camera RAW | dng nef cr2 cr3 arw raf orf rw2 pef srw x3f … (38 extensions) | LibRaw | – | – |
 | Others | bmp tif tiff svg ico tga qoi pnm xpm dds exr icns … | gdk-pixbuf | – | – |
 
+### Optional libraries
+
+qimgv needs only GTK 3, libjpeg-turbo, libpng, libwebp, giflib and zlib. The rest is loaded at run time:
+
+| Library | Adds | Without it |
+|---|---|---|
+| libjxl (+ libjxl_threads) | JPEG XL viewing and saving | `.jxl` opens through a gdk-pixbuf loader if one is installed |
+| libavif | AVIF viewing and saving | libheif or a gdk-pixbuf loader is used |
+| libheif | HEIF / HEIC | a gdk-pixbuf loader is used if installed |
+| LibRaw (`libraw_r`) | camera RAW | RAW files are not listed |
+| exiv2 (through `qimgv-exiv2.so`) | EXIF panel, metadata kept on save | EXIF orientation of JPEG and WebP is still applied |
+
+qimgv opens `libjxl.so`, `libavif.so`, `libheif.so` and `libraw_r.so` by their unversioned name (or the
+newest `lib*.so.*` if the unversioned symlink is missing). It does not need a rebuild when one of them gets a
+new soname. If a new libavif major version or LibRaw minor version changes its structures, qimgv turns off
+AVIF or switches RAW to a basic mode until it is rebuilt. The exiv2 plugin is linked against exiv2, so it is
+turned off after an exiv2 soname bump until it is rebuilt. `qimgv --version` lists what was loaded.
+
 The decoder is picked from the file header, so files with the wrong extension still open. EXIF orientation
 is applied. RAW files are developed with the camera white balance. **Settings → Advanced** can switch to the
 embedded JPEG preview, which is faster.
@@ -68,18 +89,20 @@ package.
 ### Release tarball
 
 Each [release][releases] has `qimgv-gtk-<version>-linux-x86_64.tar.gz`, built on Arch Linux. It contains
-`bin/qimgv` and `share/` (desktop file, metainfo, icons). It needs the libraries listed under Building at the
-versions current Arch ships.
+`bin/qimgv`, `lib/qimgv/qimgv-exiv2.so` and `share/` (desktop file, metainfo, icons). It needs the
+libraries listed under Building; the optional ones are only used if they are installed.
 
 ```sh
-tar -xzf qimgv-gtk-0.1.0-linux-x86_64.tar.gz
-sudo cp -r qimgv-gtk-0.1.0-linux-x86_64/{bin,share} /usr/local/
+tar -xzf qimgv-gtk-<version>-linux-x86_64.tar.gz
+sudo cp -r qimgv-gtk-<version>-linux-x86_64/{bin,lib,share} /usr/local/
 ```
 
 ## Building
 
-Requirements: a C++17 compiler, CMake 3.16+, GTK 3.24, libjpeg-turbo 3, libpng, libwebp, libjxl 0.9+,
-libavif 1.0+, libheif 1.16+, LibRaw 0.21+, exiv2 0.28+, giflib and zlib.
+Requirements: a C++17 compiler, CMake 3.16+, GTK 3.24, libjpeg-turbo 3, libpng, libwebp, giflib and zlib.
+Optional: the headers of libjxl 0.9+, libavif 1.0+, libheif 1.16+ and LibRaw 0.21+ (a codec whose headers
+are missing is left out of the build), and exiv2 0.28+ for the metadata plugin (`-DQIMGV_WITH_EXIV2=OFF`
+skips it).
 
 ```sh
 # Arch

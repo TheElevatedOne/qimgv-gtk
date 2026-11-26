@@ -15,6 +15,7 @@
 #include "gui/style.hpp"
 #include "image/formats.hpp"
 #include "image/metadata.hpp"
+#include "image/optlibs.hpp"
 #include "settings.hpp"
 
 using namespace qimgv;
@@ -86,6 +87,8 @@ int main(int argc, char** argv) {
     if(version) {
         printf("qimgv %s (GTK %d.%d.%d)\n", QIMGV_VERSION, gtk_get_major_version(), gtk_get_minor_version(),
                gtk_get_micro_version());
+        printf("Optional libraries:\n%s  metadata plugin: %s\n", optionalLibrariesReport().c_str(),
+               metadataPluginReport().c_str());
         return 0;
     }
 

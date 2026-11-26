@@ -1,11 +1,18 @@
-// AVIF (still images and image sequences) via libavif.
-#include <avif/avif.h>
+// AVIF (still images and image sequences) via libavif (optional, loaded at run time).
 
 #include <thread>
 
 #include "image/decoder.hpp"
+#include "image/optlibs.hpp"
 
 namespace qimgv {
+
+#ifndef QIMGV_WITH_AVIF
+bool decodeAvif(const std::string&, const DecodeOptions&, ImageData&, std::string& err) {
+    err = "qimgv was built without AVIF support";
+    return false;
+}
+#else
 
 static cairo_surface_t* applyAvifTransform(cairo_surface_t* s, const avifImage* im) {
     cairo_surface_t* cur = cairo_surface_reference(s);
@@ -28,7 +35,12 @@ static cairo_surface_t* applyAvifTransform(cairo_surface_t* s, const avifImage* 
 }
 
 bool decodeAvif(const std::string& path, const DecodeOptions& opt, ImageData& img, std::string& err) {
-    avifDecoder* dec = avifDecoderCreate();
+    const auto* av = avifApi();
+    if(!av) {
+        err = "AVIF support needs libavif";
+        return false;
+    }
+    avifDecoder* dec = av->avifDecoderCreate();
     if(!dec) {
         err = "libavif init failed";
         return false;
@@ -37,47 +49,49 @@ bool decodeAvif(const std::string& path, const DecodeOptions& opt, ImageData& im
     dec->strictFlags = AVIF_STRICT_DISABLED;
     dec->ignoreExif = AVIF_TRUE;
     dec->ignoreXMP = AVIF_TRUE;
-    avifResult r = avifDecoderSetIOFile(dec, path.c_str());
-    if(r == AVIF_RESULT_OK) r = avifDecoderParse(dec);
+    avifResult r = av->avifDecoderSetIOFile(dec, path.c_str());
+    if(r == AVIF_RESULT_OK) r = av->avifDecoderParse(dec);
     if(r != AVIF_RESULT_OK) {
-        err = avifResultToString(r);
-        avifDecoderDestroy(dec);
+        err = av->avifResultToString(r);
+        av->avifDecoderDestroy(dec);
         return false;
     }
     img.bitDepth = (int)dec->image->depth;
     img.hasAlpha = dec->alphaPresent;
     int count = (opt.firstFrameOnly || !opt.animations) ? 1 : dec->imageCount;
     for(int i = 0; i < count; i++) {
-        r = avifDecoderNextImage(dec);
+        r = av->avifDecoderNextImage(dec);
         if(r != AVIF_RESULT_OK) {
-            if(img.frames.empty()) err = avifResultToString(r);
+            if(img.frames.empty()) err = av->avifResultToString(r);
             break;
         }
         avifRGBImage rgb;
-        avifRGBImageSetDefaults(&rgb, dec->image);
+        av->avifRGBImageSetDefaults(&rgb, dec->image);
         rgb.format = AVIF_RGB_FORMAT_RGBA;
         rgb.depth = 8;
         rgb.maxThreads = dec->maxThreads;
-        if(avifRGBImageAllocatePixels(&rgb) != AVIF_RESULT_OK) {
+        if(av->avifRGBImageAllocatePixels(&rgb) != AVIF_RESULT_OK) {
             err = "Out of memory";
             break;
         }
-        r = avifImageYUVToRGB(dec->image, &rgb);
+        r = av->avifImageYUVToRGB(dec->image, &rgb);
         cairo_surface_t* s = nullptr;
         if(r == AVIF_RESULT_OK) s = surfaceFromRGBA(rgb.pixels, (int)rgb.width, (int)rgb.height, rgb.rowBytes);
-        avifRGBImageFreePixels(&rgb);
+        av->avifRGBImageFreePixels(&rgb);
         if(!s) {
-            if(img.frames.empty()) err = r == AVIF_RESULT_OK ? "Image is too large" : avifResultToString(r);
+            if(img.frames.empty()) err = r == AVIF_RESULT_OK ? "Image is too large" : av->avifResultToString(r);
             break;
         }
         cairo_surface_t* t = applyAvifTransform(s, dec->image);
         cairo_surface_destroy(s);
         img.frames.push_back({t, (int)(dec->imageTiming.duration * 1000.0 + 0.5)});
     }
-    avifDecoderDestroy(dec);
+    av->avifDecoderDestroy(dec);
     if(img.frames.empty()) return false;
     img.format = "AVIF";
     return true;
 }
+
+#endif
 
 }  // namespace qimgv

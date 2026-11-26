@@ -1,7 +1,5 @@
 #include "image/encoder.hpp"
 
-#include <avif/avif.h>
-#include <jxl/encode.h>
 #include <png.h>
 #include <turbojpeg.h>
 #include <webp/encode.h>
@@ -13,6 +11,7 @@
 
 #include "image/formats.hpp"
 #include "image/image.hpp"
+#include "image/optlibs.hpp"
 
 namespace qimgv {
 
@@ -98,13 +97,19 @@ static bool saveWebp(cairo_surface_t* s, const std::string& path, int quality, s
     return ok;
 }
 
+#ifdef QIMGV_WITH_JXL
 static bool saveJxl(cairo_surface_t* s, const std::string& path, int quality, std::string& err) {
     int w = cairo_image_surface_get_width(s), h = cairo_image_surface_get_height(s);
     bool alpha = surfaceHasAlpha(s);
+    const JxlApi* jx = jxlApi();
+    if(!jx) {
+        err = "Saving JPEG XL needs libjxl";
+        return false;
+    }
     std::vector<uint8_t> rgba = surfaceToRGBA(s);
-    JxlEncoder* enc = JxlEncoderCreate(nullptr);
+    JxlEncoder* enc = jx->JxlEncoderCreate(nullptr);
     JxlBasicInfo info;
-    JxlEncoderInitBasicInfo(&info);
+    jx->JxlEncoderInitBasicInfo(&info);
     info.xsize = (uint32_t)w;
     info.ysize = (uint32_t)h;
     info.bits_per_sample = 8;
@@ -112,24 +117,24 @@ static bool saveJxl(cairo_surface_t* s, const std::string& path, int quality, st
     info.num_extra_channels = alpha ? 1 : 0;
     info.alpha_bits = alpha ? 8 : 0;
     info.uses_original_profile = quality >= 100 ? JXL_TRUE : JXL_FALSE;
-    bool ok = JxlEncoderSetBasicInfo(enc, &info) == JXL_ENC_SUCCESS;
+    bool ok = jx->JxlEncoderSetBasicInfo(enc, &info) == JXL_ENC_SUCCESS;
     JxlColorEncoding ce;
-    JxlColorEncodingSetToSRGB(&ce, JXL_FALSE);
-    ok = ok && JxlEncoderSetColorEncoding(enc, &ce) == JXL_ENC_SUCCESS;
-    JxlEncoderFrameSettings* fs = JxlEncoderFrameSettingsCreate(enc, nullptr);
+    jx->JxlColorEncodingSetToSRGB(&ce, JXL_FALSE);
+    ok = ok && jx->JxlEncoderSetColorEncoding(enc, &ce) == JXL_ENC_SUCCESS;
+    JxlEncoderFrameSettings* fs = jx->JxlEncoderFrameSettingsCreate(enc, nullptr);
     if(quality >= 100)
-        JxlEncoderSetFrameLossless(fs, JXL_TRUE);
+        jx->JxlEncoderSetFrameLossless(fs, JXL_TRUE);
     else
-        JxlEncoderSetFrameDistance(fs, JxlEncoderDistanceFromQuality((float)quality));
+        jx->JxlEncoderSetFrameDistance(fs, jx->JxlEncoderDistanceFromQuality((float)quality));
     JxlPixelFormat pf = {4, JXL_TYPE_UINT8, JXL_NATIVE_ENDIAN, 0};
-    ok = ok && JxlEncoderAddImageFrame(fs, &pf, rgba.data(), rgba.size()) == JXL_ENC_SUCCESS;
-    JxlEncoderCloseInput(enc);
+    ok = ok && jx->JxlEncoderAddImageFrame(fs, &pf, rgba.data(), rgba.size()) == JXL_ENC_SUCCESS;
+    jx->JxlEncoderCloseInput(enc);
     std::vector<uint8_t> out(64 * 1024);
     uint8_t* next = out.data();
     size_t avail = out.size();
     JxlEncoderStatus st = JXL_ENC_NEED_MORE_OUTPUT;
     while(ok && st == JXL_ENC_NEED_MORE_OUTPUT) {
-        st = JxlEncoderProcessOutput(enc, &next, &avail);
+        st = jx->JxlEncoderProcessOutput(enc, &next, &avail);
         if(st == JXL_ENC_NEED_MORE_OUTPUT) {
             size_t used = next - out.data();
             out.resize(out.size() * 2);
@@ -138,44 +143,52 @@ static bool saveJxl(cairo_surface_t* s, const std::string& path, int quality, st
         }
     }
     ok = ok && st == JXL_ENC_SUCCESS;
-    JxlEncoderDestroy(enc);
+    jx->JxlEncoderDestroy(enc);
     if(!ok) {
         err = "JPEG XL encoding failed";
         return false;
     }
     return writeFile(path, out.data(), next - out.data(), err);
 }
+#endif
 
+#ifdef QIMGV_WITH_AVIF
 static bool saveAvif(cairo_surface_t* s, const std::string& path, int quality, std::string& err) {
     int w = cairo_image_surface_get_width(s), h = cairo_image_surface_get_height(s);
+    const AvifApi* av = avifApi();
+    if(!av) {
+        err = "Saving AVIF needs libavif";
+        return false;
+    }
     std::vector<uint8_t> rgba = surfaceToRGBA(s);
-    avifImage* image = avifImageCreate((uint32_t)w, (uint32_t)h, 8,
+    avifImage* image = av->avifImageCreate((uint32_t)w, (uint32_t)h, 8,
                                        quality >= 100 ? AVIF_PIXEL_FORMAT_YUV444 : AVIF_PIXEL_FORMAT_YUV420);
     avifRGBImage rgb;
-    avifRGBImageSetDefaults(&rgb, image);
+    av->avifRGBImageSetDefaults(&rgb, image);
     rgb.format = AVIF_RGB_FORMAT_RGBA;
     rgb.depth = 8;
     rgb.pixels = rgba.data();
     rgb.rowBytes = (uint32_t)w * 4;
-    bool ok = avifImageRGBToYUV(image, &rgb) == AVIF_RESULT_OK;
+    bool ok = av->avifImageRGBToYUV(image, &rgb) == AVIF_RESULT_OK;
     avifRWData out = AVIF_DATA_EMPTY;
-    avifEncoder* enc = avifEncoderCreate();
+    avifEncoder* enc = av->avifEncoderCreate();
     enc->quality = quality;
     enc->qualityAlpha = quality;
     enc->speed = 6;
     enc->maxThreads = (int)std::max(1u, std::thread::hardware_concurrency());
-    ok = ok && avifEncoderWrite(enc, image, &out) == AVIF_RESULT_OK;
-    avifEncoderDestroy(enc);
-    avifImageDestroy(image);
+    ok = ok && av->avifEncoderWrite(enc, image, &out) == AVIF_RESULT_OK;
+    av->avifEncoderDestroy(enc);
+    av->avifImageDestroy(image);
     if(!ok) {
-        avifRWDataFree(&out);
+        av->avifRWDataFree(&out);
         err = "AVIF encoding failed";
         return false;
     }
     ok = writeFile(path, out.data, out.size, err);
-    avifRWDataFree(&out);
+    av->avifRWDataFree(&out);
     return ok;
 }
+#endif
 
 bool saveSurface(cairo_surface_t* s, const std::string& path, int quality, std::string& err) {
     if(!s) {
@@ -186,9 +199,13 @@ bool saveSurface(cairo_surface_t* s, const std::string& path, int quality, std::
     if(ext == "jpg" || ext == "jpeg" || ext == "jpe" || ext == "jfif") return saveJpeg(s, path, quality, err);
     if(ext == "png") return savePng(s, path, err);
     if(ext == "webp") return saveWebp(s, path, quality, err);
+#ifdef QIMGV_WITH_JXL
     if(ext == "jxl") return saveJxl(s, path, quality, err);
+#endif
+#ifdef QIMGV_WITH_AVIF
     if(ext == "avif") return saveAvif(s, path, quality, err);
-    err = "Saving to ." + ext + " is not supported (use jpg, png, webp, jxl or avif)";
+#endif
+    err = "Saving to ." + ext + " is not supported";
     return false;
 }
 

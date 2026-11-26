@@ -12,6 +12,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 option(QIMGV_BUILD_TESTS "Build the decoder test tool" ON)
+option(QIMGV_WITH_EXIV2 "Build the exiv2 metadata plugin (qimgv-exiv2.so)" ON)
 
 include(GNUInstallDirs)
 find_package(PkgConfig REQUIRED)
@@ -22,13 +23,31 @@ pkg_check_modules(IMGLIBS REQUIRED IMPORTED_TARGET
   libturbojpeg>=3.0
   libpng>=1.6
   libwebp
-  libwebpdemux
-  libjxl>=0.9
-  libjxl_threads
-  libavif>=1.0
-  libheif>=1.16
-  libraw_r>=0.21
-  exiv2>=0.28)
+  libwebpdemux)
+
+# Optional codecs. qimgv does not link against them: their headers are used at build time and the
+# libraries are dlopen()ed at run time (src/image/optlibs.cpp), so a missing library or a new soname
+# only disables that format. A library whose headers are not found here is left out of the build.
+set(QIMGV_OPTIONAL_DEFS "")
+set(QIMGV_OPTIONAL_INCLUDES "")
+macro(qimgv_optional_codec var define)
+  pkg_check_modules(${var} ${ARGN})
+  if(${var}_FOUND)
+    list(APPEND QIMGV_OPTIONAL_DEFS ${define})
+    list(APPEND QIMGV_OPTIONAL_INCLUDES ${${var}_INCLUDE_DIRS})
+    message(STATUS "Optional codec ${define}: enabled (loaded at run time)")
+  else()
+    message(STATUS "Optional codec ${define}: headers not found, disabled")
+  endif()
+endmacro()
+qimgv_optional_codec(JXL QIMGV_WITH_JXL "libjxl>=0.9" libjxl_threads)
+qimgv_optional_codec(AVIF QIMGV_WITH_AVIF "libavif>=1.0")
+qimgv_optional_codec(HEIF QIMGV_WITH_HEIF "libheif>=1.16")
+qimgv_optional_codec(RAW QIMGV_WITH_RAW "libraw_r>=0.21")
+if(QIMGV_WITH_EXIV2)
+  pkg_check_modules(EXIV2 REQUIRED IMPORTED_TARGET exiv2>=0.28)
+endif()
+set(QIMGV_PLUGIN_DIR ${CMAKE_INSTALL_FULL_LIBDIR}/qimgv)
 find_library(GIF_LIBRARY NAMES gif REQUIRED)
 find_path(GIF_INCLUDE_DIR gif_lib.h REQUIRED)
 find_package(ZLIB REQUIRED)
@@ -68,12 +87,28 @@ add_library(qimgvimage STATIC
   src/image/dec_heif.cpp
   src/image/dec_raw.cpp
   src/image/dec_pixbuf.cpp
+  src/image/optlibs.cpp
   src/image/encoder.cpp
   src/image/metadata.cpp
   src/image/thumbnail.cpp)
-target_include_directories(qimgvimage PUBLIC src ${CMAKE_CURRENT_BINARY_DIR} PRIVATE ${GIF_INCLUDE_DIR})
+target_include_directories(qimgvimage PUBLIC src ${CMAKE_CURRENT_BINARY_DIR}
+  PRIVATE ${GIF_INCLUDE_DIR} ${QIMGV_OPTIONAL_INCLUDES})
+target_compile_definitions(qimgvimage PUBLIC ${QIMGV_OPTIONAL_DEFS})
 target_compile_options(qimgvimage PRIVATE -Wall -Wextra)
-target_link_libraries(qimgvimage PUBLIC PkgConfig::GTK3 PRIVATE PkgConfig::IMGLIBS ${GIF_LIBRARY} ZLIB::ZLIB Threads::Threads)
+target_link_libraries(qimgvimage PUBLIC PkgConfig::GTK3
+  PRIVATE PkgConfig::IMGLIBS ${GIF_LIBRARY} ZLIB::ZLIB Threads::Threads ${CMAKE_DL_LIBS})
+
+# ---- optional metadata plugin (exiv2) -------------------------------------
+# Built next to the qimgv binary so it is found in the build tree; installed to ${QIMGV_PLUGIN_DIR}.
+if(QIMGV_WITH_EXIV2)
+  add_library(qimgv-exiv2 MODULE src/plugins/exiv2/metadata_exiv2.cpp)
+  set_target_properties(qimgv-exiv2 PROPERTIES PREFIX "" CXX_VISIBILITY_PRESET hidden
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+  target_include_directories(qimgv-exiv2 PRIVATE src)
+  target_compile_options(qimgv-exiv2 PRIVATE -Wall -Wextra)
+  target_link_libraries(qimgv-exiv2 PRIVATE PkgConfig::EXIV2)
+  install(TARGETS qimgv-exiv2 LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/qimgv)
+endif()
 
 # ---- application ----------------------------------------------------------
 add_executable(qimgv
